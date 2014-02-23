@@ -4,7 +4,7 @@
 import vkontakte
 import psycopg2
 import time
-import datetime
+from datetime import datetime
 import socket
 import ssl
 import os
@@ -87,6 +87,7 @@ def escape_user_profile(i, nullify=True):
 def insert_user_profiles(profiles_orig):
     if not profiles_orig:
         return
+
     # deduplicate uids
     profiles = dict([(profile["uid"], escape_user_profile(profile.copy())) for profile in profiles_orig])
     profile_ids = ",".join([str(i) for i in profiles.keys()])
@@ -132,6 +133,54 @@ def insert_user_friends(user, friends):
     l = friends
     cursor.execute("delete from vk_friends where f = %s; insert into vk_friends (f, t) values " % (user) + ",".join(["(%s, %s)" % (user, v) for v in l]) + ";commit;")
 
+def _convert_post(post):
+    newpost = {}
+    newpost["id"] = post["id"]
+    newpost["from_id"] = post["from_id"]
+    newpost["owner_id"] = post["owner_id"]
+    newpost["date"] = datetime.fromtimestamp(post["date"])
+    newpost["text"] = post["text"]
+    newpost["reply_count"] = post["comments"]["count"]
+    newpost["likes_count"] = post["likes"]["count"]
+    newpost["share_count"] = post["reposts"]["count"]
+    newpost["has_attachments"] = "attachment" in post
+    newpost["is_repost"] = "copy_history" in post
+    return newpost
+
+def insert_post(post):
+    cursor.execute("insert into vk_wall (id, from_id, owner_id, date, text, reply_count, likes_count, has_attachments, is_repost) values (%(id)s, %(from_id)s, %(owner_id)s, %(date)s, %(text)s, %(reply_count)s, %(likes_count)s, %(has_attachments)s, %(is_repost)s);", post)
+
+
+def get_user_posts(user, all_posts = False):
+    if not user:
+        return []
+    num_posts = 0
+    offset = 0
+    posts = []
+    err_count = 0
+    while True:
+        try:
+            resp = vk.get('wall.get', owner_id=user, count=100, offset=offset, filter="owner", v=5.7)
+            count = resp['count']
+            offset += 100
+            part = [_convert_post(t) for t in resp["items"]]
+            [insert_post(b) for b in part]
+            posts += part
+            if not all_posts or len(posts) >= count:
+                return posts
+            err_count = 0
+        except (vkontakte.api.VKError):
+            err_count += 1
+            if err_count < 10:
+                continue
+            return posts
+        except (socket.error):
+            err_count += 1
+            if err_count < 10:
+                time.sleep(0.3)
+                continue
+            return posts
+
 
 def ensure_user_profiles(friends):
     if not friends:
@@ -173,22 +222,18 @@ def get_user_friends(user):
     # ask postgres
     cursor.execute('select t from vk_friends where f=%s;', (user,))
     friends = [i[0] for i in cursor.fetchall()]
+
     # if fails, get full list from vk
-    if not friends:
-        # try:
-            # print "dumping vk for http://vk.com/id%s"%user
-            # response = vk.get('friends.get', fields='uid,first_name,last_name,nickname,sex,bdate,city,country,timezone,photo_big,domain,rate,contacts,education,connections', uid=user, order='hints')
-            # insert_user_profiles(response)
-            # friends = [i["uid"] for i in response]
-            # insert_user_friends(user, friends)
-        # except (vkontakte.api.VKError, ssl.SSLError, socket.gaierror):
-            ## if fails, get short list from vk
+    while True:
+        if not friends:
             try:
                 friends = vk.get('friends.get', uid=user)
                 insert_user_friends(user, friends)
-                ensure_user_profiles(friends)
             except (vkontakte.api.VKError, ssl.SSLError, socket.gaierror):
                 friends = []
+            except (socket.error):
+                    continue
+        break
     if friends == [0]:
         friends = []
     return friends
