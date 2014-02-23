@@ -40,3 +40,20 @@ create table social_connections(
     facebook bigint,
     vk bigint
 );
+
+create table social_mbti(
+    vk_id bigint,
+    tim smallint
+);
+
+create table vk_wall(
+    id bigint,
+    from_id bigint,
+    owner_id bigint,
+    date timestamp,
+    text text,
+    reply_count smallint,
+    likes_count smallint,
+    has_attachments boolean,
+    is_repost boolean
+);
