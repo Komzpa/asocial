@@ -23,6 +23,13 @@ a = psycopg2.connect(database)
 a.autocommit = True
 cursor = a.cursor()
 
+is_online = True
+# is_online = False
+
+
+def get_psql_cursor():
+    return cursor
+
 
 def escape_date_iso8601(date, null="NULL"):
     if not date:
@@ -96,7 +103,7 @@ def insert_user_profiles(profiles_orig):
     values = values.encode('utf-8')
     values = unicode(values, errors='ignore')
     try:
-        cursor.execute("delete from vk_people where uid in (%(profile_ids)s);insert into vk_people (uid, first_name, last_name, nickname, bdate, domain, photo_big, sex, country, city, timezone, mobile_phone, home_phone, university, faculty, graduation) values %(values)s;commit;" % locals())
+        cursor.execute("delete from vk_people where uid in (%(profile_ids)s);insert into vk_people (uid, first_name, last_name, nickname, bdate, domain, photo_big, sex, country, city, timezone, mobile_phone, home_phone, university, faculty, graduation) values %(values)s;" % locals())
     except psycopg2.DataError:
         if len(profiles_orig) > 1:
             for profile in profiles_orig:
@@ -111,7 +118,7 @@ def insert_user_profiles(profiles_orig):
                 if k not in i:
                     i[k] = ""
                 i[k] = "'" + i[k].replace("'", "''").strip() + "'"
-            cursor.execute("delete from vk_university where university = %(university)s and faculty = %(faculty)s; insert into vk_university (university, faculty, university_name, faculty_name) values (%(university)s, %(faculty)s, %(university_name)s, %(faculty_name)s); commit;" % i)
+            cursor.execute("delete from vk_university where university = %(university)s and faculty = %(faculty)s; insert into vk_university (university, faculty, university_name, faculty_name) values (%(university)s, %(faculty)s, %(university_name)s, %(faculty_name)s);" % i)
         connected = False
         for k in ('skype', 'twitter', 'livejournal', 'instagram', 'facebook'):
             if k not in i:
@@ -121,7 +128,7 @@ def insert_user_profiles(profiles_orig):
             i[k] = "'" + str(i[k]).replace("'", "''").strip() + "'"
         if connected:
             i["facebook"] = int("0" + i["facebook"].strip("'"))
-            cursor.execute("delete from social_connections where vk = %(uid)s; insert into social_connections (skype, twitter, livejournal, instagram, facebook, vk) values (%(skype)s, %(twitter)s, %(livejournal)s, %(instagram)s, %(facebook)s, %(uid)s); commit;" % i)
+            cursor.execute("delete from social_connections where vk = %(uid)s; insert into social_connections (skype, twitter, livejournal, instagram, facebook, vk) values (%(skype)s, %(twitter)s, %(livejournal)s, %(instagram)s, %(facebook)s, %(uid)s);" % i)
 
 
 def insert_user_friends(user, friends):
@@ -131,7 +138,8 @@ def insert_user_friends(user, friends):
     if not friends:
         friends = [0]
     l = friends
-    cursor.execute("delete from vk_friends where f = %s; insert into vk_friends (f, t) values " % (user) + ",".join(["(%s, %s)" % (user, v) for v in l]) + ";commit;")
+    cursor.execute("delete from vk_friends where f = %s; insert into vk_friends (f, t) values " % (user) + ",".join(["(%s, %s)" % (user, v) for v in l]) + ";")
+
 
 def _convert_post(post):
     newpost = {}
@@ -147,11 +155,12 @@ def _convert_post(post):
     newpost["is_repost"] = "copy_history" in post
     return newpost
 
+
 def insert_post(post):
-    cursor.execute("insert into vk_wall (id, from_id, owner_id, date, text, reply_count, likes_count, has_attachments, is_repost) values (%(id)s, %(from_id)s, %(owner_id)s, %(date)s, %(text)s, %(reply_count)s, %(likes_count)s, %(has_attachments)s, %(is_repost)s);", post)
+    cursor.execute("delete from vk_wall where id=%(id)s and date=%(date)s; insert into vk_wall (id, from_id, owner_id, date, text, reply_count, likes_count, has_attachments, is_repost) values (%(id)s, %(from_id)s, %(owner_id)s, %(date)s, %(text)s, %(reply_count)s, %(likes_count)s, %(has_attachments)s, %(is_repost)s);", post)
 
 
-def get_user_posts(user, all_posts = False):
+def get_user_posts(user, all_posts=False):
     if not user:
         return []
     num_posts = 0
@@ -180,42 +189,118 @@ def get_user_posts(user, all_posts = False):
                 time.sleep(0.3)
                 continue
             return posts
+        except (UnicodeDecodeError):
+            return posts
 
 
 def ensure_user_profiles(friends):
     if not friends:
         return
+    if not is_online:
+        return
     friends = set(friends)
+
     cursor.execute('select uid from vk_people where uid in (' + ",".join([str(int(uid)) for uid in friends]) + ");")
     friends_in_db = set([i[0] for i in cursor.fetchall()])
     frieds_to_fetch = friends - friends_in_db
+    # print len(frieds_to_fetch)
     if frieds_to_fetch:
-        print "fetching %s profiles" % len(frieds_to_fetch)
+        # print "fetching %s profiles" % len(frieds_to_fetch)
         frieds_to_fetch = list(frieds_to_fetch)
         frieds_to_fetch.sort()
-        size = 500
+        size = 200
         while frieds_to_fetch:
             current_friends = frieds_to_fetch[:size]
             try:
-                response = vk.get('users.get', fields='uid,first_name,last_name,nickname,sex,bdate,city,country,timezone,photo_big,domain,rate,contacts,education,connections', uids=",".join([str(i) for i in current_friends]), order='hints')
+                response = vk.get('users.get', fields='uid,first_name,last_name,nickname,sex,bdate,city,country,timezone,photo_big,domain,rate,contacts,education,connections', uids=",".join([str(i) for i in current_friends]))
                 insert_user_profiles(response)
-            except (vkontakte.api.VKError, ssl.SSLError, socket.gaierror):
+            except (vkontakte.api.VKError):
                 size /= 1.5
                 size = max(int(size), 150)
-                print "reducing limit to", size
+                continue
+            except (socket.error, ssl.SSLError, socket.gaierror):
                 continue
             size = min(1000, size + 1)
             frieds_to_fetch = frieds_to_fetch[size:]
 
 
-def get_user_profiles(friends):
+def get_user_profiles(friends, access_api=True):
     if not friends:
         return []
-    ensure_user_profiles(friends)
+    if access_api:
+        ensure_user_profiles(friends)
     cursor.execute('select * from vk_people where uid in (' + ",".join([str(int(uid)) for uid in friends]) + ");")
     names = [q[0] for q in cursor.description]
     profiles = [dict(map(None, names, row)) for row in cursor.fetchall()]
     return profiles
+
+
+def get_group_info(gid):
+    if not gid:
+        return {}
+    profiles = []
+    while not profiles:
+        cursor.execute('select * from vk_groups where gid = %s;', (gid,))
+        names = [q[0] for q in cursor.description]
+        profiles = [dict(map(None, names, row)) for row in cursor.fetchall()]
+        # print profiles
+        if (not profiles) and is_online:
+            try:
+                groups = vk.get("groups.getById", group_id=gid, v=5.12)[0]
+                cursor.execute('delete from vk_groups where gid = %(id)s; insert into vk_groups (gid, name, screen_name, is_closed) values (%(id)s, %(name)s, %(screen_name)s, %(is_closed)s)', groups)
+                get_group_members(gid, inexact=True, always_fetch=True)
+            except (vkontakte.api.VKError), e:
+                time.sleep(0.3)
+                continue
+            except (socket.error, ssl.SSLError, socket.gaierror):
+                continue
+        elif not profiles and not is_online:
+            profiles = [{'name': 'asocial: OFFLINE_UNAVAILABLE', 'user_count': -1}]
+    return profiles[0]
+
+        #(gid, name, screen_name, is_closed, user_count)
+
+groups_fetched = set()
+
+
+def get_user_groups(user, inexact=False):
+    if not is_online:
+        inexact = True
+        # ask postgres
+    cursor.execute('select gid from vk_memberships where uid=%s;', (user,))
+    groups = [i[0] for i in cursor.fetchall()]
+
+    if (inexact and groups) or (0 in groups) or (-1 in groups):
+        # if 0 in groups:
+            # groups.remove(0)
+        if -1 in groups:
+            groups.remove(-1)
+        return groups
+
+    groups = []
+
+    while is_online:
+        try:
+            groups = vk.get("groups.get", user_id=user, filter="groups,publics", count=1000, v=5.12)["items"]
+            for group in groups:
+                # if group not in groups_fetched:
+                    # print "group", group
+                    # print group, get_group_info(group)
+                    # groups_fetched.add(group)
+                    insert_group_members(group, [user])
+            insert_group_members(-1, [user])
+            break
+        except (vkontakte.api.VKError), e:
+
+            if e.code == 260:
+                insert_group_members(0, [user])
+                return []
+            # print e
+            time.sleep(0.5)
+            continue
+        except (socket.error, ssl.SSLError, socket.gaierror):
+            continue
+    return groups
 
 
 def get_user_friends(user):
@@ -224,15 +309,18 @@ def get_user_friends(user):
     friends = [i[0] for i in cursor.fetchall()]
 
     # if fails, get full list from vk
-    while True:
+    while is_online:
         if not friends:
             try:
                 friends = vk.get('friends.get', uid=user)
                 insert_user_friends(user, friends)
-            except (vkontakte.api.VKError, ssl.SSLError, socket.gaierror):
+            except (vkontakte.api.VKError), e:
                 friends = []
-            except (socket.error):
-                    continue
+                if e.code == 15:  # 'Access denied: user deactivated'
+                    insert_user_friends(user, friends)
+
+            except (socket.error, ssl.SSLError, socket.gaierror):
+                continue
         break
     if friends == [0]:
         friends = []
@@ -240,37 +328,66 @@ def get_user_friends(user):
 
 
 def get_user_followers(user):
-    return vk.get("subscriptions.getFollowers", uid=user, count=1000)["users"]
+    if is_online:
+        return vk.get("subscriptions.getFollowers", uid=user, count=1000)["users"]
+    else:
+        return []
 
 
 def get_user_subscriptions(user):
-    return vk.get("subscriptions.get", uid=user, count=1000)["users"]
+    if is_online:
+        return vk.get("subscriptions.get", uid=user, count=1000)["users"]
+    else:
+        return []
 
 
-def get_group_members(gid):
-    members = vk.get("groups.getMembers", gid=gid)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=1000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=2000)["users"]
-    time.sleep(1)
-    members += vk.get("groups.getMembers", gid=gid, offset=3000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=4000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=5000)["users"]
-    time.sleep(1)
-    members += vk.get("groups.getMembers", gid=gid, offset=6000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=7000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=8000)["users"]
-    time.sleep(1)
-    members += vk.get("groups.getMembers", gid=gid, offset=9000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=10000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=11000)["users"]
-    time.sleep(1)
-    members += vk.get("groups.getMembers", gid=gid, offset=12000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=13000)["users"]
-    members += vk.get("groups.getMembers", gid=gid, offset=14000)["users"]
+def search_users(q):
+    if is_online:
+        return [i['uid'] for i in vk.get("users.search", company=q, count=1000)[1:]]
+    else:
+        return []
+
+
+def insert_group_members(gid, members):
+    if members:
+        cursor.execute("delete from vk_memberships where gid = %s and uid in (%s); insert into vk_memberships (gid, uid) values " % (gid, ",".join([str(i) for i in members])) + ",".join(["(%s, %s)" % (gid, v) for v in members]) + ";")
+
+
+def get_group_members(gid, inexact=False, always_fetch=False):
+
+    if not always_fetch or not is_online:
+        cursor.execute('select uid from vk_memberships where gid = %s;', (gid,))
+        members = [i[0] for i in cursor.fetchall()]
+        cursor.execute('select user_count from vk_groups where gid = %s;', (gid,))
+        count = [i[0] for i in cursor.fetchall()]
+        if not is_online or (count and members and (count[0] <= len(members) or inexact)):
+            return members
+
+    count = 0
+    offset = 0
+    members = []
+    while offset <= count:
+        try:
+            resp = vk.get("groups.getMembers", gid=gid, offset=offset)
+            count = resp["count"]
+            members += resp["users"]
+            offset += 1000
+            if inexact and offset <= count:
+                break
+        except (vkontakte.api.VKError), e:
+            if e.code == 203:
+                break
+            time.sleep(0.3)
+        except (socket.error, ssl.SSLError, socket.gaierror):
+            continue
+    print 'count', count
+    cursor.execute('update vk_groups set user_count = %s where gid = %s;', (count, gid))
+    insert_group_members(gid, members)
     return members
 
 
 def ensure_users_friends(users):
+
     # TODO: filter users by postgres not to get lists twice
     size = 100
     frieds_to_fetch = users
@@ -292,7 +409,7 @@ def ensure_users_friends(users):
             time.sleep(0.3)
             size /= 1.5
             size = max(int(size), 10)
-            print "reducing limit to", size
+            # print "reducing limit to", size
             continue
         size = min(1000, size + 1)
         frieds_to_fetch = frieds_to_fetch[size:]
