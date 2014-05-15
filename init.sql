@@ -1,5 +1,5 @@
 drop table if exists vk_friends;
-create table vk_friends (f bigint, t bigint);
+create table vk_friends (f int, t int);
 create index on vk_friends (f);
 create table vk_people(
     uid bigint primary key,
@@ -42,18 +42,31 @@ create table social_connections(
 );
 
 create table social_mbti(
-    vk_id bigint,
+    vk_id int,
     tim smallint
 );
 
 create table vk_wall(
-    id bigint,
-    from_id bigint,
-    owner_id bigint,
+    id int,
+    from_id int,
+    owner_id int,
     date timestamp,
     text text,
     reply_count smallint,
     likes_count smallint,
     has_attachments boolean,
     is_repost boolean
+);
+
+create table vk_memberships(
+    uid int,
+    gid int
+);
+
+create table vk_groups(
+    gid int primary key,
+    name text,
+    screen_name text,
+    is_closed smallint,
+    user_count int
 );
