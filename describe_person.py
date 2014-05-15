@@ -13,6 +13,8 @@ import random
 import sys
 import json
 import progressbar
+from collections import Counter
+
 reload(sys)
 sys.setdefaultencoding("utf-8")
 
@@ -24,23 +26,36 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
     if not deep and user in stat_cache:
         return stat_cache[user]
     if not group:
-        friends = get_user_friends(user)
+        friends_ids = get_user_friends(user)
         if followers:
-            friends += get_user_followers(user)
-            friends += get_user_subscriptions(user)
+            friends_ids += get_user_followers(user)
+            friends_ids += get_user_subscriptions(user)
     if group:
-        friends = get_group_members(user)
+        friends_ids = get_group_members(user)
 
-    friends.sort()
+    friends_ids.sort()
     num = 0
     random.seed(0)
-    if len(friends) > 10000:
-        friends = random.sample(friends, 10000)
-        friends.sort()
-    friends = get_user_profiles(friends, False)
-    friends.reverse()
+    if len(friends_ids) > 10000:
+        friends_ids = random.sample(friends_ids, 10000)
+        friends_ids.sort()
 
     deep = max(0, deep - 1)
+
+    if get_groups:
+        friends_groups = get_users_groups(friends_ids, inexact=(not deep) and len(friends_ids) > 100)
+
+    if deep and get_groups and len(friends_ids) < 100:
+        further_friends = Counter()
+        for k, v in friends_groups.iteritems():
+            if 0 in v:
+                further_friends.update(get_user_friends(k))
+        get_users_groups([i[0] for i in further_friends.most_common() if i[1] > 0])
+        # ensure_user_profiles([i[0] for i in further_friends.most_common() if i[1] > 0])
+
+    friends = get_user_profiles(friends_ids, False)
+    friends.reverse()
+
     stats = {
         "countries": {},
         "cities": {},
@@ -85,7 +100,7 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
         groups = []
 
         if get_groups:
-            groups = get_user_groups(friend['uid'])
+            groups = friends_groups[friend['uid']]
             for group in groups:
                 stats["groups"][group] = stats["groups"].get(group, 0) + 1
 
@@ -102,8 +117,6 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
                     max_group = max(u_grps.values())
                     for group in u_grps.keys():
                         stats["groups"][group] = stats["groups"].get(group, 0) + 1. * u_grps[group] / max_group
-    #        for f_uid in st['friends'].keys():
-    #            stats['friends'][f_uid] = stats["friends"].get(f_uid, 0) + 1. * st['friends'][f_uid]
                 us = st["years"]
                 if us:
                     year = max(us, key=us.get)
@@ -112,7 +125,7 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
             stats["years"][year] = stats["years"].get(year, 0) + 1
 
     for group in stats["groups"].keys():
-        if stats["groups"][group] < 2:  # (0.005 * len(friends) + 1):
+        if stats["groups"][group] <= 2:
             del stats["groups"][group]
 
     groups = stats["groups"].keys()
@@ -134,10 +147,10 @@ if __name__ == '__main__':
         exit(1)
 
     if passed_id > 0:
-        stats = get_stats(passed_id, 2, followers=True)
+        stats = get_stats(passed_id, 1, followers=True)
         pprint.pprint(stats)
     else:
-        stats = get_stats(-passed_id, 2, group=True, followers=True)
+        stats = get_stats(-passed_id, 1, group=True, followers=True)
         pprint.pprint(stats)
     groups = stats["groups"].keys()
     groups.sort(key=stats["groups"].get)
@@ -148,42 +161,3 @@ if __name__ == '__main__':
         if group:
             group_info = get_group_info(group)
             print 'http://vk.com/club%s' % group, group_info['name'], stats["groups"][group], group_info['user_count']
-
-            if group_info['user_count'] and ((1. * stats["groups"][group] / max(group_info['user_count'], 1)) > 1e-4):
-                for uid in get_group_members(group, True):
-                    people_like[uid] = people_like.get(uid, 0) + 1. * stats["groups"][group] / max(group_info['user_count'], 1)
-
-    if passed_id < 0:
-        droprefs = get_group_members(-passed_id, True)
-    else:
-        droprefs = get_user_friends(passed_id)
-
-    for uid in droprefs:
-        if uid in people_like:
-            del people_like[uid]
-
-    people = people_like.keys()
-    people.sort(key=people_like.get)
-    people.reverse()
-
-    for person in people[:150]:
-        profile = get_user_profiles([person])
-        if profile:
-            profile = profile[0]
-            print 'http://vk.com/id%s' % person, profile["first_name"], profile["last_name"], people_like[person], profile['city']
-
-    friends_like = stats['friends']
-
-    for uid in droprefs:
-        if uid in friends_like:
-            del friends_like[uid]
-
-    friends = friends_like.keys()
-    friends.sort(key=friends_like.get)
-    friends.reverse()
-
-    for person in friends[:150]:
-        profile = get_user_profiles([person])
-        if profile:
-            profile = profile[0]
-            print 'http://vk.com/id%s' % person, profile["first_name"], profile["last_name"], friends_like[person], profile['city']

@@ -5,11 +5,14 @@ import vkontakte
 import psycopg2
 import time
 from datetime import datetime
+import StringIO
 import socket
 import ssl
 import os
 import sys
+import progressbar
 import json
+
 reload(sys)
 sys.setdefaultencoding("utf-8")
 
@@ -25,6 +28,8 @@ cursor = a.cursor()
 
 is_online = True
 # is_online = False
+
+USER_GROUP_CACHE = {}
 
 
 def get_psql_cursor():
@@ -201,7 +206,7 @@ def ensure_user_profiles(friends):
     friends = set(friends)
 
     cursor.execute('select uid from vk_people where uid in (' + ",".join([str(int(uid)) for uid in friends]) + ");")
-    friends_in_db = set([i[0] for i in cursor.fetchall()])
+    friends_in_db = set([i[0] for i in cursor])
     frieds_to_fetch = friends - friends_in_db
     # print len(frieds_to_fetch)
     if frieds_to_fetch:
@@ -231,7 +236,7 @@ def get_user_profiles(friends, access_api=True):
         ensure_user_profiles(friends)
     cursor.execute('select * from vk_people where uid in (' + ",".join([str(int(uid)) for uid in friends]) + ");")
     names = [q[0] for q in cursor.description]
-    profiles = [dict(map(None, names, row)) for row in cursor.fetchall()]
+    profiles = [dict(map(None, names, row)) for row in cursor]
     return profiles
 
 
@@ -242,7 +247,7 @@ def get_group_info(gid):
     while not profiles:
         cursor.execute('select * from vk_groups where gid = %s;', (gid,))
         names = [q[0] for q in cursor.description]
-        profiles = [dict(map(None, names, row)) for row in cursor.fetchall()]
+        profiles = [dict(map(None, names, row)) for row in cursor]
         # print profiles
         if (not profiles) and is_online:
             try:
@@ -250,6 +255,7 @@ def get_group_info(gid):
                 cursor.execute('delete from vk_groups where gid = %(id)s; insert into vk_groups (gid, name, screen_name, is_closed) values (%(id)s, %(name)s, %(screen_name)s, %(is_closed)s)', groups)
                 get_group_members(gid, inexact=True, always_fetch=True)
             except (vkontakte.api.VKError), e:
+                print e
                 time.sleep(0.3)
                 continue
             except (socket.error, ssl.SSLError, socket.gaierror):
@@ -263,12 +269,117 @@ def get_group_info(gid):
 groups_fetched = set()
 
 
-def get_user_groups(user, inexact=False):
+def get_users_groups(users, inexact=False):
+    if not users:
+        return {}
+    # print "getting %s user groups"% len(users)
+    users = list(users)
+    # users.sort()
+    groups = {}
+    users_to_fetch = []
+    for user in users:
+        if user in USER_GROUP_CACHE:
+            groups[user] = USER_GROUP_CACHE[user][:]
+
+        else:
+            users_to_fetch.append(user)
+    ram_only_query = True
+    if users_to_fetch:
+        ram_only_query = False
+        __users_from_ram = len(groups)
+        __pre_pg_time = time.time()
+
+        cursor.execute('set enable_seqscan to off;')
+
+        cursor.execute('select uid, gid from vk_memberships where uid in (%s);' % ",".join([str(int(user)) for user in users_to_fetch]))
+
+        __users_from_pg = 0
+        __pg_rows = 0
+        for i in cursor:
+            __pg_rows += 1
+            if i[0] not in groups:
+                groups[i[0]] = [i[1]]
+                __users_from_pg += 1
+            else:
+                groups[i[0]].append(i[1])
+        users_to_fetch = []
+        cursor.execute('set enable_seqscan to on;')
+        for user in users:
+            if (user not in groups) or ((0 not in groups[user]) and (-1 not in groups[user])):
+                users_to_fetch.append(user)
+                groups[user] = []  # get_user_groups(user, skip_pg=True)
+
+        size = 24
+        print 'user groups taken from ram: %s, from postgres: %s (%s rows in %ss), to fetch from web: %s, total in ram cache: %s' % (__users_from_ram, __users_from_pg, __pg_rows, time.time() - __pre_pg_time, len(users_to_fetch), len(USER_GROUP_CACHE))
+
+        if users_to_fetch:
+            __max_progress = len(users_to_fetch)
+            progress = progressbar.ProgressBar(widgets=[progressbar.Percentage(), ' ',
+                                                        progressbar.Bar(marker=">", left='[', right=']'), ' ', progressbar.ETA()], maxval=len(users_to_fetch)).start()
+
+        rsp_restructured = {}
+        while users_to_fetch and not inexact:
+            current_friends = users_to_fetch[:size]
+            try:
+                query = 'return [' + ", ".join(['{uid: %s, l: API.groups.get({uid: %s, filter: "groups,publics", count: 1000}) }' % (friend, friend) for friend in current_friends]) + '];'
+                response = vk.get('execute', code=query)
+
+                for fs in response:
+                    # insert_user_groups(fs['uid'], fs['l'])
+                    # if len(current_friends) != len(response):
+                        # print 'ALARM!!', len(current_friends), len(response)
+                    rsp_restructured[fs['uid']] = []
+                    if fs['l']:
+                        if 0 in fs['l']:
+                            fs['l'].remove(0)
+                        # insert_user_groups(fs['uid'], fs['l'] + [-1])
+                        if fs['l'] not in groups[fs['uid']]:
+                            groups[fs['uid']].extend(fs['l'])
+                            rsp_restructured[fs['uid']].extend(fs['l'])
+                    else:
+                        fs['l'] = [0]
+                        groups[fs['uid']].extend([0])
+                        # insert_user_groups(fs['uid'], [0])
+                        rsp_restructured[fs['uid']].extend([0])
+                    if not rsp_restructured[fs['uid']]:
+                        del rsp_restructured[fs['uid']]
+                    # if groups[fs['uid']]:
+                        # rsp_restructured[fs['uid']] = groups[fs['uid']]
+                if len(rsp_restructured) > 5000:
+                    insert_groups_members(rsp_restructured)
+                    rsp_restructured = {}
+            except (vkontakte.api.VKError), e:
+                print e
+                # size -= 1
+                # if size < 1:
+                    # size = 1
+                time.sleep(0.3)
+                continue
+            except (socket.error, ssl.SSLError, socket.gaierror):
+                continue
+            users_to_fetch = users_to_fetch[size:]
+            progress.update(__max_progress - len(users_to_fetch))
+        if rsp_restructured:
+            insert_groups_members(rsp_restructured)
+            progress.finish()
+    for k, v in groups.iteritems():
+        if not ram_only_query:
+            USER_GROUP_CACHE[k] = v[:]
+        if -1 in v:
+            v.remove(-1)
+
+    return groups
+
+
+def get_user_groups(user, inexact=False, skip_pg=False):
+    groups = []
     if not is_online:
         inexact = True
+
+    if not skip_pg:
         # ask postgres
-    cursor.execute('select gid from vk_memberships where uid=%s;', (user,))
-    groups = [i[0] for i in cursor.fetchall()]
+        cursor.execute('select gid from vk_memberships where uid=%s;', (user,))
+        groups = [i[0] for i in cursor]
 
     if (inexact and groups) or (0 in groups) or (-1 in groups):
         # if 0 in groups:
@@ -282,12 +393,13 @@ def get_user_groups(user, inexact=False):
     while is_online:
         try:
             groups = vk.get("groups.get", user_id=user, filter="groups,publics", count=1000, v=5.12)["items"]
-            for group in groups:
+            insert_user_groups(user, groups)
+            # for group in groups:
                 # if group not in groups_fetched:
                     # print "group", group
                     # print group, get_group_info(group)
                     # groups_fetched.add(group)
-                    insert_group_members(group, [user])
+                    # insert_group_members(group, [user])
             insert_group_members(-1, [user])
             break
         except (vkontakte.api.VKError), e:
@@ -306,7 +418,7 @@ def get_user_groups(user, inexact=False):
 def get_user_friends(user):
     # ask postgres
     cursor.execute('select t from vk_friends where f=%s;', (user,))
-    friends = [i[0] for i in cursor.fetchall()]
+    friends = [i[0] for i in cursor]
 
     # if fails, get full list from vk
     while is_online:
@@ -353,13 +465,34 @@ def insert_group_members(gid, members):
         cursor.execute("delete from vk_memberships where gid = %s and uid in (%s); insert into vk_memberships (gid, uid) values " % (gid, ",".join([str(i) for i in members])) + ",".join(["(%s, %s)" % (gid, v) for v in members]) + ";")
 
 
+def insert_groups_members(groups):
+    if groups:
+        # deleter = []
+        inserter = []
+        for k, v in groups.iteritems():
+            # deleter.append("(uid = %s and gid in (%s))"%(k, ",".join([str(p) for p in v])))
+            for p in v:
+                inserter.append("%s\t%s" % (p, k))
+        # deleter = " or ".join(deleter)
+        inserter = "\n".join(inserter)
+        # print "delete from vk_memberships where " + deleter + "; insert into vk_memberships (gid, uid) values" + inserter+ ";"
+        # cursor.execute("delete from vk_memberships where " + deleter +";")
+        # cursor.execute("insert into vk_memberships (gid, uid) values" + inserter+ ";")
+        cursor.copy_from(StringIO.StringIO(inserter), 'vk_memberships', columns=('gid', 'uid'))
+
+
+def insert_user_groups(user, groups):
+    if groups:
+        cursor.execute("insert into vk_memberships (gid, uid) values " + ",".join(["(%s, %s)" % (gid, user) for gid in groups]) + ";")
+
+
 def get_group_members(gid, inexact=False, always_fetch=False):
 
     if not always_fetch or not is_online:
         cursor.execute('select uid from vk_memberships where gid = %s;', (gid,))
-        members = [i[0] for i in cursor.fetchall()]
+        members = [i[0] for i in cursor]
         cursor.execute('select user_count from vk_groups where gid = %s;', (gid,))
-        count = [i[0] for i in cursor.fetchall()]
+        count = [i[0] for i in cursor]
         if not is_online or (count and members and (count[0] <= len(members) or inexact)):
             return members
 
@@ -389,7 +522,7 @@ def get_group_members(gid, inexact=False, always_fetch=False):
 def ensure_users_friends(users):
 
     # TODO: filter users by postgres not to get lists twice
-    size = 100
+    size = 25
     frieds_to_fetch = users
     all_friends = set()
     to_profile = set()
@@ -405,11 +538,12 @@ def ensure_users_friends(users):
                     to_profile.update(fs['l'])
             ensure_user_profiles(list(to_profile))
             to_profile = set()
-        except (vkontakte.api.VKError, ssl.SSLError, socket.gaierror):
+        except (vkontakte.api.VKError):
             time.sleep(0.3)
             size /= 1.5
             size = max(int(size), 10)
-            # print "reducing limit to", size
+            continue
+        except (socket.error, ssl.SSLError, socket.gaierror):
             continue
         size = min(1000, size + 1)
         frieds_to_fetch = frieds_to_fetch[size:]
