@@ -2,7 +2,7 @@ drop table if exists vk_friends;
 create table vk_friends (f int, t int);
 create index on vk_friends (f);
 create table vk_people(
-    uid bigint primary key,
+    uid int primary key,
 
     first_name text,
     last_name text,
@@ -38,7 +38,7 @@ create table social_connections(
     livejournal text,
     instagram text,
     facebook bigint,
-    vk bigint
+    vk int
 );
 
 create table social_mbti(
@@ -62,6 +62,9 @@ create table vk_memberships(
     uid int,
     gid int
 );
+
+create index on vk_memberships (uid);
+create index on vk_memberships (gid);
 
 create table vk_groups(
     gid int primary key,
