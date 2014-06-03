@@ -318,7 +318,7 @@ def get_users_groups(users, inexact=False):
                                                         progressbar.Bar(marker=">", left='[', right=']'), ' ', progressbar.ETA()], maxval=len(users_to_fetch)).start()
 
         rsp_restructured = {}
-        while users_to_fetch and not inexact:
+        while users_to_fetch and not inexact and is_online:
             current_friends = users_to_fetch[:size]
             try:
                 query = 'return [' + ", ".join(['{uid: %s, l: API.groups.get({uid: %s, filter: "groups,publics", count: 1000}) }' % (friend, friend) for friend in current_friends]) + '];'
@@ -335,7 +335,7 @@ def get_users_groups(users, inexact=False):
                         # insert_user_groups(fs['uid'], fs['l'] + [-1])
                         if fs['l'] not in groups[fs['uid']]:
                             groups[fs['uid']].extend(fs['l'])
-                            rsp_restructured[fs['uid']].extend(fs['l'])
+                            rsp_restructured[fs['uid']].extend(fs['l'] + [-1])
                     else:
                         fs['l'] = [0]
                         groups[fs['uid']].extend([0])

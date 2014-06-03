@@ -43,9 +43,9 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
     deep = max(0, deep - 1)
 
     if get_groups:
-        friends_groups = get_users_groups(friends_ids, inexact=(not deep) and len(friends_ids) > 100)
+        friends_groups = get_users_groups(friends_ids, inexact=(not deep) and len(friends_ids) > 10000)
 
-    if deep and get_groups and len(friends_ids) < 100:
+    if deep and get_groups and len(friends_ids) < 1000:
         further_friends = Counter()
         for k, v in friends_groups.iteritems():
             if 0 in v:
@@ -125,7 +125,7 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
             stats["years"][year] = stats["years"].get(year, 0) + 1
 
     for group in stats["groups"].keys():
-        if stats["groups"][group] <= 2:
+        if stats["groups"][group] <= 1.5:
             del stats["groups"][group]
 
     groups = stats["groups"].keys()
@@ -150,7 +150,7 @@ if __name__ == '__main__':
         stats = get_stats(passed_id, 1, followers=True)
         pprint.pprint(stats)
     else:
-        stats = get_stats(-passed_id, 1, group=True, followers=True)
+        stats = get_stats(-passed_id, 2, group=True, followers=True)
         pprint.pprint(stats)
     groups = stats["groups"].keys()
     groups.sort(key=stats["groups"].get)
