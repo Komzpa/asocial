@@ -36,14 +36,16 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
     friends_ids.sort()
     num = 0
     random.seed(0)
-    if len(friends_ids) > 10000:
-        friends_ids = random.sample(friends_ids, 10000)
+    if len(friends_ids) > 10000000:
+        friends_ids = random.sample(friends_ids, 10000000)
         friends_ids.sort()
+
+    friends = get_user_profiles(friends_ids, True)
 
     deep = max(0, deep - 1)
 
     if get_groups:
-        friends_groups = get_users_groups(friends_ids, inexact=(not deep) and len(friends_ids) > 10000)
+        friends_groups = get_users_groups(friends_ids)
 
     if deep and get_groups and len(friends_ids) < 1000:
         further_friends = Counter()
@@ -53,7 +55,7 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
         get_users_groups([i[0] for i in further_friends.most_common() if i[1] > 0])
         # ensure_user_profiles([i[0] for i in further_friends.most_common() if i[1] > 0])
 
-    friends = get_user_profiles(friends_ids, False)
+
     friends.reverse()
 
     stats = {
@@ -69,7 +71,7 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
         "graduated": 0,
     }
 
-    if followers:
+    if followers and friends:
         progress = progressbar.ProgressBar(widgets=[progressbar.Percentage(), ' ',
                                                     progressbar.Bar(marker=">", left='[', right=']'), ' ', progressbar.ETA()])
         friend_iter = progress(friends)
@@ -130,8 +132,8 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
 
     groups = stats["groups"].keys()
     groups.sort(key=stats["groups"].get)
-    for group in groups[-15:]:
-        get_group_info(group)
+    #for group in groups[-15:]:
+        #get_group_info(group)
 
     stat_cache[user] = stats
 
@@ -147,7 +149,7 @@ if __name__ == '__main__':
         exit(1)
 
     if passed_id > 0:
-        stats = get_stats(passed_id, 1, followers=True)
+        stats = get_stats(passed_id, 2, followers=True)
         pprint.pprint(stats)
     else:
         stats = get_stats(-passed_id, 2, group=True, followers=True)

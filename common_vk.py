@@ -364,8 +364,8 @@ def get_users_groups(users, inexact=False):
             progress.finish()
     for k, v in groups.iteritems():
         if not ram_only_query:
-            USER_GROUP_CACHE[k] = v[:]
-        if -1 in v:
+            USER_GROUP_CACHE[k] = list(set(v))
+        while -1 in v:
             v.remove(-1)
 
     return groups
