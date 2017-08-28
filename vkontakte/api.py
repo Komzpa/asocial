@@ -5,6 +5,7 @@ import urllib
 import re
 from hashlib import md5
 from functools import partial
+
 try:
     import json
 except ImportError:
@@ -12,10 +13,9 @@ except ImportError:
 from vkontakte import http
 
 API_URL = 'http://api.vk.com/api.php'
-SECURE_API_URL = 'https://api.vkontakte.ru/method/'
+SECURE_API_URL = 'https://api.vk.com/method/'
 DEFAULT_TIMEOUT = 3
 REQUEST_ENCODING = 'utf8'
-
 
 # See full list of VK API methods here:
 # http://vk.com/developers.php?o=-1&p=%D0%A0%D0%B0%D1%81%D1%88%D0%B8%D1%80%D0%B5%D0%BD%D0%BD%D1%8B%D0%B5_%D0%BC%D0%B5%D1%82%D0%BE%D0%B4%D1%8B_API&s=0
@@ -64,6 +64,7 @@ def signature(api_secret, params):
     keys = sorted(params.keys())
     param_str = "".join(["%s=%s" % (str(key), _encode(params[key])) for key in keys])
     return md5(param_str + str(api_secret)).hexdigest()
+
 
 # We have to support this:
 #
@@ -160,6 +161,5 @@ class _API(object):
 
 
 class API(_API):
-
     def get(self, method, timeout=DEFAULT_TIMEOUT, **kwargs):
         return self._get(method, timeout, **kwargs)

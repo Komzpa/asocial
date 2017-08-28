@@ -41,7 +41,6 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
         friends_ids.sort()
 
     friends = get_user_profiles(friends_ids, True)
-
     deep = max(0, deep - 1)
 
     if get_groups:
@@ -54,7 +53,6 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
                 further_friends.update(get_user_friends(k))
         get_users_groups([i[0] for i in further_friends.most_common() if i[1] > 0])
         # ensure_user_profiles([i[0] for i in further_friends.most_common() if i[1] > 0])
-
 
     friends.reverse()
 
@@ -73,7 +71,8 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
 
     if followers and friends:
         progress = progressbar.ProgressBar(widgets=[progressbar.Percentage(), ' ',
-                                                    progressbar.Bar(marker=">", left='[', right=']'), ' ', progressbar.ETA()])
+                                                    progressbar.Bar(marker=">", left='[', right=']'), ' ',
+                                                    progressbar.ETA()])
         friend_iter = progress(friends)
     else:
         friend_iter = friends
@@ -81,7 +80,7 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
     for friend in friend_iter:
         num += 1
         # if deep:
-            # print num, '/', len(friends), friend['uid'], friend['first_name'], friend['last_name']
+        # print num, '/', len(friends), friend['uid'], friend['first_name'], friend['last_name']
 
         if friend['city']:
             stats["cities"][friend['city']] = stats["cities"].get(friend['city'], 0) + 1
@@ -132,8 +131,8 @@ def get_stats(user, deep=0, group=False, followers=False, get_groups=True):
 
     groups = stats["groups"].keys()
     groups.sort(key=stats["groups"].get)
-    #for group in groups[-15:]:
-        #get_group_info(group)
+    # for group in groups[-15:]:
+    # get_group_info(group)
 
     stat_cache[user] = stats
 
