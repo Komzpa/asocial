@@ -20,7 +20,7 @@ import personal
 
 vk = vkontakte.API(token=personal.vk_token)
 
-database = "dbname=gis user=gis"
+database = "dbname=kom"
 
 a = psycopg2.connect(database)
 a.autocommit = True
@@ -93,7 +93,7 @@ def escape_user_profile(i, nullify=True):
         if k not in i:
             i[k] = null
         else:
-            i[k] = "'" + i[k].replace("'", "''") + "'"
+            i[k] = "'" + str(i[k]).replace("'", "''") + "'"
     return i
 
 
@@ -137,9 +137,12 @@ def insert_user_profiles(profiles_orig):
                 connected = True
             i[k] = "'" + str(i[k]).replace("'", "''").strip() + "'"
         if connected:
-            i["facebook"] = int("0" + i["facebook"].strip("'").strip('+'))
-            cursor.execute(
+            try:
+                i["facebook"] = int("0" + i["facebook"].strip("'").strip('+'))
+                cursor.execute(
                 "delete from social_connections where vk = %(uid)s; insert into social_connections (skype, twitter, livejournal, instagram, facebook, vk) values (%(skype)s, %(twitter)s, %(livejournal)s, %(instagram)s, %(facebook)s, %(uid)s);" % i)
+            except (ValueError):
+                pass
 
 
 def insert_user_friends(user, friends):
@@ -227,7 +230,7 @@ def ensure_user_profiles(friends):
             current_friends = frieds_to_fetch[:size]
             try:
                 response = vk.get('users.get',
-                                  fields='uid,first_name,last_name,nickname,sex,bdate,city,country,timezone,photo_big,domain,rate,contacts,education,connections',
+                                  fields='uid,first_name,last_name,nickname,sex,bdate,city,country,timezone,photo_big,domain,rate,contacts,education,connections', version="3.0",
                                   uids=",".join([str(i) for i in current_friends]))
                 insert_user_profiles(response)
             except (vkontakte.api.VKError):
@@ -340,9 +343,9 @@ def get_users_groups(users, inexact=False):
             current_friends = users_to_fetch[:size]
             try:
                 query = 'return [' + ", ".join([
-                                                   '{uid: %s, l: API.groups.get({uid: %s, filter: "groups,publics", count: 1000}) }' % (
+                    '{uid: %s, l: API.groups.get({uid: %s, filter: "groups,publics", count: 1000}) }' % (
                                                    friend, friend) for friend in current_friends]) + '];'
-                response = vk.get('execute', code=query)
+                response = vk.get('execute', code=query, version="3.0")
 
                 for fs in response:
                     # insert_user_groups(fs['uid'], fs['l'])
@@ -444,7 +447,7 @@ def get_user_friends(user):
     while is_online:
         if not friends:
             try:
-                friends = vk.get('friends.get', uid=user)
+                friends = vk.get('friends.get', uid=user,version="3.0")
                 insert_user_friends(user, friends)
             except (vkontakte.api.VKError), e:
                 friends = []
@@ -461,14 +464,14 @@ def get_user_friends(user):
 
 def get_user_followers(user):
     if is_online:
-        return vk.get("users.getFollowers", uid=user, count=1000)["items"]
+        return vk.get("users.getFollowers", uid=user, count=1000, version="3.0")["items"]
     else:
         return []
 
 
 def get_user_subscriptions(user):
     if is_online:
-        return vk.get("users.getSubscriptions", uid=user, count=1000)["users"]["items"]
+        return vk.get("users.getSubscriptions", uid=user, count=1000, version="3.0")["users"]["items"]
     else:
         return []
 
@@ -523,7 +526,7 @@ def get_group_members(gid, inexact=False, always_fetch=False):
     members = []
     while offset <= count:
         try:
-            resp = vk.get("groups.getMembers", gid=gid, offset=offset)
+            resp = vk.get("groups.getMembers", gid=gid, offset=offset, version="3.0")
             count = resp["count"]
             members += resp["users"]
             offset += 1000
